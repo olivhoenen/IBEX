@@ -11,6 +11,19 @@
  * metric because they are deterministic and therefore safe to assert in CI.
  */
 
+import { clearRequestCache, getRequestCacheStats } from './requestCache';
+
+/** Request-cache counters, mirrored from requestCache.ts. */
+export interface PerfCacheStats {
+  hits: number;
+  dedup: number;
+  misses: number;
+  evictions: number;
+  skipped: number;
+  entries: number;
+  bytes: number;
+}
+
 export interface PerfSnapshot {
   /** Number of HTTP requests issued to the backend since the last reset. */
   fetchCount: number;
@@ -20,11 +33,14 @@ export interface PerfSnapshot {
   renders: Record<string, number>;
   /** Plotly redraw counts, keyed by grid id. */
   redraws: Record<string, number>;
+  /** Cumulative request-cache counters (not reset between measurements). */
+  cache: PerfCacheStats;
 }
 
-interface PerfApi extends PerfSnapshot {
+interface PerfApi {
   reset: () => void;
   snapshot: () => PerfSnapshot;
+  clearRequestCache: () => void;
 }
 
 declare global {
@@ -32,6 +48,13 @@ declare global {
     __ibexPerf?: PerfApi;
   }
 }
+
+const counters = {
+  fetchCount: 0,
+  fetchUrls: [] as string[],
+  renders: {} as Record<string, number>,
+  redraws: {} as Record<string, number>,
+};
 
 const isEnabled = (): boolean =>
   typeof window !== 'undefined' && window.env?.E2E_TEST === 'true';
@@ -44,30 +67,30 @@ export const installPerfCounters = (): void => {
   if (!isEnabled() || window.__ibexPerf) return;
 
   const api: PerfApi = {
-    fetchCount: 0,
-    fetchUrls: [],
-    renders: {},
-    redraws: {},
     reset() {
-      api.fetchCount = 0;
-      api.fetchUrls = [];
-      api.renders = {};
-      api.redraws = {};
+      counters.fetchCount = 0;
+      counters.fetchUrls = [];
+      counters.renders = {};
+      counters.redraws = {};
     },
     snapshot() {
       return {
-        fetchCount: api.fetchCount,
-        fetchUrls: [...api.fetchUrls],
-        renders: { ...api.renders },
-        redraws: { ...api.redraws },
+        fetchCount: counters.fetchCount,
+        fetchUrls: [...counters.fetchUrls],
+        renders: { ...counters.renders },
+        redraws: { ...counters.redraws },
+        cache: getRequestCacheStats(),
       };
     },
+    clearRequestCache,
   };
 
   window.__ibexPerf = api;
 
   // Every renderer -> backend call goes through fetchFromApi, which uses the
   // global fetch, so this is the single accounting point for backend traffic.
+  // Note this counts requests that actually reach the network: a cache hit
+  // never gets here, which is exactly what the benchmark asserts on.
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url =
@@ -76,22 +99,20 @@ export const installPerfCounters = (): void => {
         : input instanceof URL
           ? input.toString()
           : input.url;
-    api.fetchCount += 1;
-    api.fetchUrls.push(url);
+    counters.fetchCount += 1;
+    counters.fetchUrls.push(url);
     return originalFetch(input, init);
   };
 };
 
 /** Records one render of `key`. No-op outside E2E runs. */
 export const countRender = (key: string): void => {
-  const perf = window.__ibexPerf;
-  if (!perf) return;
-  perf.renders[key] = (perf.renders[key] ?? 0) + 1;
+  if (!window.__ibexPerf) return;
+  counters.renders[key] = (counters.renders[key] ?? 0) + 1;
 };
 
 /** Records one Plotly redraw for `gridId`. No-op outside E2E runs. */
 export const countRedraw = (gridId: string): void => {
-  const perf = window.__ibexPerf;
-  if (!perf) return;
-  perf.redraws[gridId] = (perf.redraws[gridId] ?? 0) + 1;
+  if (!window.__ibexPerf) return;
+  counters.redraws[gridId] = (counters.redraws[gridId] ?? 0) + 1;
 };

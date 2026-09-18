@@ -59,6 +59,17 @@ export interface GridHandle {
  * failing test would also intercept every following click.
  */
 export async function resetAppState() {
+  // The request cache lives for the lifetime of the app, which the specs share.
+  // Clearing it keeps each spec independent: otherwise an earlier spec warms
+  // the cache and a later one silently exercises a different code path.
+  await getDriver().executeScript(() => {
+    (
+      window as Window & {
+        __ibexPerf?: { clearRequestCache: () => void };
+      }
+    ).__ibexPerf?.clearRequestCache();
+  });
+
   const closeButtons = await getDriver().findElements(
     By.css('button.mantine-Modal-close'),
   );

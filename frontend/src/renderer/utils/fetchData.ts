@@ -26,16 +26,23 @@ import { getTensorizedMatrix, transformComplexData } from './plot';
 import { replaceNullsWithNaN } from './functions';
 import { normalizeIndices } from './uri';
 import { OptionWithTooltip } from '../types/components/select';
+import { cachedRequest } from './requestCache';
 
 /**
  * Retrieves the API configuration.
  */
+let configPromise: ReturnType<typeof window.api.getConfig> | null = null;
+
 const getConfig = async () => {
   try {
-    const config = await window.api.getConfig();
+    // The config is fixed for the lifetime of the session, so resolve it once
+    // instead of crossing the Electron IPC boundary on every request.
+    configPromise ??= window.api.getConfig();
+    const config = await configPromise;
     if (!config) throw new Error('Failed to load configuration');
     return config;
   } catch (error) {
+    configPromise = null; // allow a retry
     console.error('Error fetching config:', error);
     throw error;
   }
@@ -113,6 +120,7 @@ async function fetchWithTimeout(
 const fetchFromApi = async <T>(
   endpoint: string,
   timeout?: number,
+  cacheable = true,
 ): Promise<T> => {
   let responseStatus: number;
   try {
@@ -136,19 +144,29 @@ const fetchFromApi = async <T>(
         });
       }
     };
-    const response = await fetchFn();
+    // The cache stores the body text and each caller parses its own copy: the
+    // parsed graph is mutated in place downstream, so it must never be shared.
+    const body = await cachedRequest(
+      url,
+      async () => {
+        const response = await fetchFn();
 
-    if (!response.ok) {
-      if (response?.status) {
-        responseStatus = response.status;
-      }
-      const errorData = await response.json();
-      throw new Error(
-        errorData.message || errorData.detail || 'Failed to fetch data',
-      );
-    }
+        if (!response.ok) {
+          if (response?.status) {
+            responseStatus = response.status;
+          }
+          const errorData = await response.json();
+          throw new Error(
+            errorData.message || errorData.detail || 'Failed to fetch data',
+          );
+        }
 
-    return response.json();
+        return response.text();
+      },
+      cacheable,
+    );
+
+    return JSON.parse(body) as T;
   } catch (error) {
     if (error.name === 'AbortError') {
       console.error(`Timeout after ${timeout}ms: fetchFromApi(${endpoint}).`);
@@ -636,5 +654,7 @@ export const fetchGeometryNodes = async (uri: string, labelUri: string) => {
  * Return backend version.
  */
 export const fetchInfoVersion = async () => {
-  return fetchFromApi<InfoVersionResponse>(`/info/version`);
+  // Never cached: the header polls this to show whether the backend is alive,
+  // and a cached answer would freeze that indicator on its first value.
+  return fetchFromApi<InfoVersionResponse>(`/info/version`, undefined, false);
 };

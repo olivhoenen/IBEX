@@ -15,15 +15,12 @@ export async function resetPerf(): Promise<void> {
 
 /** Reads the counters accumulated since the last {@link resetPerf}. */
 export async function readPerf(): Promise<PerfSnapshot> {
-  const snapshot = await getDriver().executeScript(
-    () =>
-      window.__ibexPerf?.snapshot() ?? {
-        fetchCount: 0,
-        fetchUrls: [],
-        renders: {},
-        redraws: {},
-      },
+  const snapshot = await getDriver().executeScript(() =>
+    window.__ibexPerf?.snapshot(),
   );
+  if (!snapshot) {
+    throw new Error('window.__ibexPerf is not installed');
+  }
   return snapshot as PerfSnapshot;
 }
 
