@@ -44,7 +44,7 @@ def node_info(uri: str, show_error_bars: bool = False) -> dict:
     :return: JSON response
 
     """
-    return ibex_service.get_node_info(uri.strip(), show_error_bars)
+    return ibex_service.get_node_info(uri.strip(), show_error_bars=show_error_bars)
 
 
 @router.get(

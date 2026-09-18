@@ -4,6 +4,8 @@ import imas
 from packaging.version import Version
 from pytest_unordered import unordered
 
+from ibex.endpoints import ids_info
+
 
 def test_node_info_coordinates(entry_path):
     test_dict = {
@@ -247,3 +249,46 @@ def test_show_error_bars_option(entry_path):
     assert "r0_error_upper" in [child["name"] for child in response.json()["children"]], (
         "Error bars filtering failed. 'r0_error_upper' nodes was not returned, but it should be."
     )
+
+
+def test_node_info_never_requests_the_recursive_tree(entry_path, monkeypatch):
+    """`show_error_bars` used to be passed positionally into `get_node_info`, whose second
+    parameter is `recursive`. Switching the option on therefore built the metadata of the whole
+    subtree - which the response model then discarded - and never applied the error bar filter.
+    The response looks the same either way, so guard the delegation itself.
+    """
+    calls = []
+
+    def spy(uri, recursive=False, show_error_bars=False):
+        calls.append({"uri": uri, "recursive": recursive, "show_error_bars": show_error_bars})
+        return {
+            "name": "vacuum_toroidal_field",
+            "type": "structure",
+            "ndim": 0,
+            "shape": [],
+            "is_geometry_node": False,
+            "children": [],
+            "coordinates": [],
+        }
+
+    monkeypatch.setattr(ids_info.ibex_service, "get_node_info", spy)
+
+    for show_error_bars in (True, False):
+        parameters = {
+            "uri": f"imas:hdf5?path={entry_path}#core_profiles/vacuum_toroidal_field",
+            "show_error_bars": show_error_bars,
+        }
+        assert pytest.test_client.get("/ids_info/node_info", params=parameters).status_code == 200
+
+    assert calls == [
+        {
+            "uri": f"imas:hdf5?path={entry_path}#core_profiles/vacuum_toroidal_field",
+            "recursive": False,
+            "show_error_bars": True,
+        },
+        {
+            "uri": f"imas:hdf5?path={entry_path}#core_profiles/vacuum_toroidal_field",
+            "recursive": False,
+            "show_error_bars": False,
+        },
+    ]

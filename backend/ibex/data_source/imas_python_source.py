@@ -172,7 +172,7 @@ class IMASPythonSource(DataSourceInterface):
         result["is_geometry_node"] = self._is_geometry_node(metadata)
 
         if recursive:
-            result["children"] = [self._jsonify_metadata(child, recursive) for child in metadata]
+            result["children"] = [self._jsonify_metadata(child, recursive, show_error_bars) for child in metadata]
         else:
             result["children"] = [
                 {
