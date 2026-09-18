@@ -53,13 +53,13 @@ the store replacing the whole configuration on every write, which stages 3 and
 
 ## After the render-path fixes (stage 2)
 
-| Scenario | requests | redraws | renders | ms |
-|---|---|---|---|---|
-| toggle edit mode (UI flag) | 0 | **2** | 42 | 1145 |
-| coordinate slider, 2 steps | 0 | **6** | 40 | 1546 |
-| metadata panel, first open | 2 | 3 | 6 | 1106 |
-| metadata panel, revisit | **0** | **9** | 52 | 1679 |
-| idle (no interaction) | 0 | 0 | 0 | 2130 |
+| Scenario                   | requests | redraws | renders | ms   |
+| -------------------------- | -------- | ------- | ------- | ---- |
+| toggle edit mode (UI flag) | 0        | **2**   | 42      | 1145 |
+| coordinate slider, 2 steps | 0        | **6**   | 40      | 1546 |
+| metadata panel, first open | 2        | 3       | 6       | 1106 |
+| metadata panel, revisit    | **0**    | **9**   | 52      | 1679 |
+| idle (no interaction)      | 0        | 0       | 0       | 2130 |
 
 Three of the four guards now pass. Redraws against the original baseline:
 toggling a UI flag 11 → 2, two slider steps 12 → 6, reopening the metadata
@@ -74,3 +74,25 @@ That last one cannot be fixed from the render path — the store replaces the
 whole configuration on every write, so the sibling panel genuinely receives new
 props. Stages 3 and 4 (the data/config split and selector subscriptions) are
 what close it.
+
+## After narrowing subscriptions and memoizing the panel (stage 3, partial)
+
+| Scenario | requests | redraws | renders | ms |
+|---|---|---|---|---|
+| toggle edit mode (UI flag) | 0 | 2 | **14** | 1105 |
+| coordinate slider, 2 steps | 0 | 6 | **28** | 1547 |
+| metadata panel, first open | 2 | 3 | 6 | 993 |
+| metadata panel, revisit | 0 | 9 | 52 | 1650 |
+| idle (no interaction) | 0 | 0 | 0 | 2126 |
+
+Component renders against the original baseline: toggling a UI flag 42 → 14,
+two slider steps 40 → 28.
+
+## Where the last guard stands
+
+`toggle edit mode` still redraws the untouched heatmap panel **once** (it was 6
+at the baseline). Closing it needs the full data/config store split: the plot
+components no longer subscribe to the store and the panel is memoized, but the
+configuration object is still replaced wholesale on every write, so
+`VisualizationPlot` — which does subscribe — re-renders and rebuilds the grid,
+and react-grid-layout clones its children on the way through.

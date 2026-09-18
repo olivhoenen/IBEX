@@ -53,7 +53,6 @@ export const SimplePlotly = ({
     );
   }, [itemDataGrid.plot, itemDataGrid.coordinates]);
   const coordsUsedInAxes: 1 | 2 = 1;
-  const { active, updatedConfiguration } = useIbexStore();
   const SELECT_AXIS_HEIGHT = 40; // Height of the select axis component
   const [layoutPlot, setLayoutPlot] = useState<Partial<Layout>>({
     xaxis: {
@@ -210,13 +209,14 @@ export const SimplePlotly = ({
       return;
     }
 
-    // Update title only if is editing
-    const updatedDataPlot: DataGridPlot[] = structuredClone(active.dataPlot);
-    for (const dataPlot of updatedDataPlot) {
-      if (dataPlot.i === itemDataGrid.i) {
-        dataPlot.title = title;
-      }
-    }
+    // Update title only if is editing. The store is read here rather than
+    // subscribed to: this component only ever writes to it, and subscribing
+    // would re-render - and so redraw Plotly - on every unrelated change.
+    const { active, updatedConfiguration } = useIbexStore.getState();
+
+    const updatedDataPlot: DataGridPlot[] = active.dataPlot.map((dataPlot) =>
+      dataPlot.i === itemDataGrid.i ? { ...dataPlot, title } : dataPlot,
+    );
 
     const newActive: Configuration = {
       ...active,
@@ -391,8 +391,8 @@ export const SimplePlotly = ({
                     ).axeIndex,
                     0, // axeIndex of x is always 0
                     false,
-                    active,
-                    updatedConfiguration,
+                    useIbexStore.getState().active,
+                    useIbexStore.getState().updatedConfiguration,
                   )
                 }
                 size="xs"

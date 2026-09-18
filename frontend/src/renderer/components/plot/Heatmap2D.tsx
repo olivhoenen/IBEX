@@ -49,7 +49,6 @@ export const Heatmap2D = ({
   forcedPlotType,
   handleUpdateCoordinate,
 }: Heatmap2DProps) => {
-  const { active, updatedConfiguration } = useIbexStore();
   countRender(`Heatmap2D:${itemDataGrid.i}`);
   const handleAfterPlot = useCallback(
     () => countRedraw(itemDataGrid.i),
@@ -140,6 +139,11 @@ export const Heatmap2D = ({
    * Update the layout title & dataPlot configuration when editing title
    */
   useEffect(() => {
+    // The store is read here rather than subscribed to: this component only
+    // ever writes to it, and subscribing would re-render - and so redraw
+    // Plotly - on every unrelated change elsewhere in the configuration.
+    const { active, updatedConfiguration } = useIbexStore.getState();
+
     if (!active.dataPlot.find((element) => element.isEditing)) {
       // Update active dataplot title only when editing (to prevent from updating in customization)
       return;
@@ -445,8 +449,8 @@ export const Heatmap2D = ({
                           ).axeIndex,
                           targetAxis === 'x' ? 0 : 1,
                           false,
-                          active,
-                          updatedConfiguration,
+                          useIbexStore.getState().active,
+                          useIbexStore.getState().updatedConfiguration,
                         )
                       }
                       size="xs"
