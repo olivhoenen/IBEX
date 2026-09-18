@@ -88,6 +88,7 @@ export const VerticalSlider = ({
         }}
         tabIndex={0}
         role="slider"
+        data-testid={`slider-${name}`}
         aria-valuenow={valueIndex}
         aria-valuemin={0}
         aria-valuemax={steps - 1}

@@ -355,6 +355,7 @@ export const HoverButtons = React.memo(
                 <ActionIcon
                   variant="filled"
                   aria-label="Editing"
+                  data-testid={`grid-edit-toggle-${data.i}`}
                   onClick={() => handleEditGrid(data.i)}
                   className={classes.actionButton}
                   color={data.isEditing ? 'yellow' : 'green'}

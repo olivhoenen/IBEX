@@ -13,6 +13,7 @@ import {
 import { Center, Container, Text } from '@mantine/core';
 import { SimplePlotly, Heatmap2D } from '../plot';
 import { useIbexStore } from '../../stores';
+import { countRender } from '../../utils/perf';
 import {
   getArrayValueFromDependance,
   getErrorYVectors,
@@ -31,6 +32,7 @@ export const GridLayoutPlot = ({
   rowHeight,
 }: GridLayoutPlotProps) => {
   const { active, updatedConfiguration } = useIbexStore();
+  countRender(`GridLayoutPlot:${data.i}`);
   const [heightGrid, setHeightGrid] = useState(
     data.h * rowHeight + (23 * (data.h * rowHeight)) / 100,
   );

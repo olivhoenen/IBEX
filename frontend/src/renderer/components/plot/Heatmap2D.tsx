@@ -22,6 +22,7 @@ import {
 } from '../../utils';
 import classes from './Heatmap2D.module.css';
 import { useIbexStore } from '../../stores';
+import { countRedraw, countRender } from '../../utils/perf';
 import { NoDataForURI } from '.';
 import { usePlotLayout } from './hooks/usePlotLayout';
 import { IconLink } from '@tabler/icons-react';
@@ -49,6 +50,11 @@ export const Heatmap2D = ({
   handleUpdateCoordinate,
 }: Heatmap2DProps) => {
   const { active, updatedConfiguration } = useIbexStore();
+  countRender(`Heatmap2D:${itemDataGrid.i}`);
+  const handleAfterPlot = useCallback(
+    () => countRedraw(itemDataGrid.i),
+    [itemDataGrid.i],
+  );
   const coordsUsedInAxes: 1 | 2 = 2;
   const SELECT_AXIS_HEIGHT = 90; // Height of the select axis container
   const [xAxis, setXAxis] = useState<Axis>(null);
@@ -489,6 +495,7 @@ export const Heatmap2D = ({
             }}
             layout={layoutPlot}
             onRelayout={handleRelayout}
+            onAfterPlot={handleAfterPlot}
             useResizeHandler={false}
             className={classe.plot2D}
           />

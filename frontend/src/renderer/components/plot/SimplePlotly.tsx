@@ -15,6 +15,7 @@ import {
   swapAxis,
 } from '../../utils';
 import classes from './SimplePlotly.module.css';
+import { countRedraw, countRender } from '../../utils/perf';
 import { NoDataForURI } from '../plot';
 import { usePlotLayout } from './hooks/usePlotLayout';
 import { IconLink } from '@tabler/icons-react';
@@ -38,6 +39,12 @@ export const SimplePlotly = ({
   is3DView,
   handleUpdateCoordinate,
 }: SimplePlotlyProps) => {
+  countRender(`SimplePlotly:${itemDataGrid.i}`);
+  const handleAfterPlot = useCallback(
+    () => countRedraw(itemDataGrid.i),
+    [itemDataGrid.i],
+  );
+
   const dataToPlotWithErrorBands = useMemo(() => {
     return getErrorsAreaToPlot(
       structuredClone(itemDataGrid.plot),
@@ -480,6 +487,7 @@ export const SimplePlotly = ({
               }}
               layout={layoutPlot}
               onRelayout={handleRelayout}
+              onAfterPlot={handleAfterPlot}
               useResizeHandler={false}
             />
           </div>

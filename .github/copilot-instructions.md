@@ -123,6 +123,18 @@ npx wait-on http://127.0.0.1:8000/docs/   # backend must also be running (pip in
 npm run test:e2e                    # runs mocha against src/tests/*.spec.ts
 ```
 Run a single e2e spec: `mocha -r ts-node/register src/tests/plot-ui.spec.ts`.
+
+Reactivity benchmark (opt-in, not part of `test:e2e` — its glob is not recursive):
+```bash
+npm run start:e2e &                 # same app instance as the e2e suite
+npm run test:perf                   # src/tests/perf/*.perf.spec.ts
+```
+It builds a canvas with a 2D `equilibrium/time_slice/profiles_2d/psi` heatmap
+plus 1D traces and asserts on *counts* (backend requests, Plotly redraws), never
+on wall-clock times. The renderer-side counters live in
+`src/renderer/utils/perf.ts` and are installed only when `E2E_TEST=true`;
+`src/tests/perf/BASELINE.md` records the measured numbers.
+
 On a headless machine wrap the run in `xvfb-run --auto-servernum` as CI does.
 
 `E2E_TEST=true` changes app behaviour in two places: `src/preload.ts` swaps the
