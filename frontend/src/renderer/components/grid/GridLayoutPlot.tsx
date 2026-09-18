@@ -19,6 +19,7 @@ import {
   getErrorYVectors,
   getLastIndexedField,
   getVectorData,
+  isSameAxisData,
   limitSlidersToMaxLength,
   normalizeIndices,
   updateIndexFieldName,
@@ -84,8 +85,7 @@ export const GridLayoutPlot = memo(function GridLayoutPlot({
         );
         const sameCoordinate =
           coordWithSameName &&
-          JSON.stringify(coordinate.data) ===
-            JSON.stringify(coordWithSameName.data);
+          isSameAxisData(coordinate.data, coordWithSameName.data);
 
         if (mainDataGrid || (isSynchronized && sameCoordinate)) {
           // Update main slider with new valueIndex & update synchronized ones matching with the same coordinate

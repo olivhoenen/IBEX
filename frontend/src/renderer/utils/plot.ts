@@ -122,6 +122,55 @@ export const plotData = (
 };
 
 /**
+ * @description Deep equality for coordinate or axis data, with an early exit on the first
+ * difference. Replaces `JSON.stringify(a) === JSON.stringify(b)`, which allocated a full
+ * serialization of both arrays - megabytes, on every slider tick, for every grid - before
+ * comparing them.
+ *
+ * Matches the semantics of the comparison it replaces: NaN equals NaN, and null equals
+ * undefined, because JSON.stringify writes both as `null` inside an array.
+ * @param a First value.
+ * @param b Second value.
+ * @returns Whether the two hold the same values.
+ */
+export function isSameAxisData(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return a == null && b == null;
+
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) {
+      return false;
+    }
+    for (let index = 0; index < a.length; index++) {
+      if (!isSameAxisData(a[index], b[index])) return false;
+    }
+    return true;
+  }
+
+  if (typeof a === 'number' && typeof b === 'number') {
+    // JSON.stringify writes NaN as null, so the old comparison saw two NaNs as equal.
+    return Number.isNaN(a) && Number.isNaN(b);
+  }
+
+  if (typeof a === 'object' && typeof b === 'object') {
+    // Complex values, stored as { r, i } pairs.
+    const keysOfA = Object.keys(a);
+    const keysOfB = Object.keys(b);
+    return (
+      keysOfA.length === keysOfB.length &&
+      keysOfA.every((key) =>
+        isSameAxisData(
+          (a as Record<string, unknown>)[key],
+          (b as Record<string, unknown>)[key],
+        ),
+      )
+    );
+  }
+
+  return false;
+}
+
+/**
  * @description Computes the default axis-ratio rule for a newly created grid, based on the 2D
  * rule: force a 1:1 ratio only when the first two coordinate axes (x and y) share the same,
  * non-empty unit. Returns false for mono-coordinate (1D) plots.
@@ -900,8 +949,14 @@ const fetchGeometryOutline = async (
   const rPath = path + 'r';
   const zPath = path + 'z';
 
+  // r and z are independent nodes: fetch them together rather than one after
+  // the other, which doubled the wait for every geometry overlay.
+  const [rResponse, zResponse] = await Promise.all([
+    fetchDataPlot(normalizeIndices(uri + rPath)),
+    fetchDataPlot(normalizeIndices(uri + zPath)),
+  ]);
+
   // Get r
-  const rResponse = await fetchDataPlot(normalizeIndices(uri + rPath));
   rResponse.data.value = closeContourGeometrie(rResponse.data.value);
   const rFormattedCoordinates = formatCoordinates(
     rResponse.data.coordinates,
@@ -910,7 +965,6 @@ const fetchGeometryOutline = async (
   const rVector = getVectorData(rFormattedCoordinates, rResponse.data.value);
 
   // Get z
-  const zResponse = await fetchDataPlot(normalizeIndices(uri + zPath));
   zResponse.data.value = closeContourGeometrie(zResponse.data.value);
   const zFormattedCoordinates = formatCoordinates(
     zResponse.data.coordinates,
@@ -959,22 +1013,17 @@ const fetchGeometryRectangle = async (
   const widthPath = path + 'width';
   const heightPath = path + 'height';
 
-  // Get r
-  const rResponse = await fetchDataPlot(normalizeIndices(uri + rPath));
+  // The four nodes are independent: one round trip instead of four in a row.
+  const [rResponse, zResponse, widthResponse, heightResponse] =
+    await Promise.all([
+      fetchDataPlot(normalizeIndices(uri + rPath)),
+      fetchDataPlot(normalizeIndices(uri + zPath)),
+      fetchDataPlot(normalizeIndices(uri + widthPath)),
+      fetchDataPlot(normalizeIndices(uri + heightPath)),
+    ]);
   const rVector = rResponse.data.value as number[][];
-
-  // Get z
-  const zResponse = await fetchDataPlot(normalizeIndices(uri + zPath));
   const zVector = zResponse.data.value as number[][];
-
-  // Get width
-  const widthResponse = await fetchDataPlot(normalizeIndices(uri + widthPath));
   const widthVector = widthResponse.data.value as number[][];
-
-  // Get height
-  const heightResponse = await fetchDataPlot(
-    normalizeIndices(uri + heightPath),
-  );
   const heightVector = heightResponse.data.value as number[][];
 
   const rectangleGeometry: Geometry[] = [];
@@ -1051,32 +1100,27 @@ const fetchGeometryOblique = async (
   const alphaPath = path + 'alpha';
   const betaPath = path + 'beta';
 
-  // Get r
-  const rResponse = await fetchDataPlot(normalizeIndices(uri + rPath));
+  // The six nodes are independent: one round trip instead of six in a row.
+  const [
+    rResponse,
+    zResponse,
+    lengthAlphaResponse,
+    lengthBetaResponse,
+    alphaResponse,
+    betaResponse,
+  ] = await Promise.all([
+    fetchDataPlot(normalizeIndices(uri + rPath)),
+    fetchDataPlot(normalizeIndices(uri + zPath)),
+    fetchDataPlot(normalizeIndices(uri + lengthAlphaPath)),
+    fetchDataPlot(normalizeIndices(uri + lengthBetaPath)),
+    fetchDataPlot(normalizeIndices(uri + alphaPath)),
+    fetchDataPlot(normalizeIndices(uri + betaPath)),
+  ]);
   const rVector = rResponse.data.value as number[][];
-
-  // Get z
-  const zResponse = await fetchDataPlot(normalizeIndices(uri + zPath));
   const zVector = zResponse.data.value as number[][];
-
-  // Get length alpha
-  const lengthAlphaResponse = await fetchDataPlot(
-    normalizeIndices(uri + lengthAlphaPath),
-  );
   const lengthAlphaVector = lengthAlphaResponse.data.value as number[][];
-
-  // Get length beta
-  const lengthBetaResponse = await fetchDataPlot(
-    normalizeIndices(uri + lengthBetaPath),
-  );
   const lengthBetaVector = lengthBetaResponse.data.value as number[][];
-
-  // Get alpha
-  const alphaResponse = await fetchDataPlot(normalizeIndices(uri + alphaPath));
   const alphaVector = alphaResponse.data.value as number[][];
-
-  // Get beta
-  const betaResponse = await fetchDataPlot(normalizeIndices(uri + betaPath));
   const betaVector = betaResponse.data.value as number[][];
   const obliqueGeometry: Geometry[] = [];
   const lastCoord =
@@ -1329,44 +1373,47 @@ export const fetchErrorBands = async (
     let upperResponse, lowerResponse: FieldValueResponse;
 
     // Get error bands
+    // The upper and lower bands are two independent nodes.
     if (urisToInterpolate.length) {
-      const interpolatedUpper = await fetchDataPlot(
-        normalizeIndices(plot.nodeUri) + '_error_upper',
-        downsamplingMethod,
-        downsamplingSize,
-        dataPlot?.dataType,
-        urisToInterpolate,
-        interpolationMethod,
-      );
+      const [interpolatedUpper, interpolatedLower] = await Promise.all([
+        fetchDataPlot(
+          normalizeIndices(plot.nodeUri) + '_error_upper',
+          downsamplingMethod,
+          downsamplingSize,
+          dataPlot?.dataType,
+          urisToInterpolate,
+          interpolationMethod,
+        ),
+        fetchDataPlot(
+          normalizeIndices(plot.nodeUri) + '_error_lower',
+          downsamplingMethod,
+          downsamplingSize,
+          dataPlot?.dataType,
+          urisToInterpolate,
+          interpolationMethod,
+        ),
+      ]);
       upperResponse = {
         value: interpolatedUpper.data.value,
       } as FieldValueResponse;
-
-      const interpolatedLower = await fetchDataPlot(
-        normalizeIndices(plot.nodeUri) + '_error_lower',
-        downsamplingMethod,
-        downsamplingSize,
-        dataPlot?.dataType,
-        urisToInterpolate,
-        interpolationMethod,
-      );
       lowerResponse = {
         value: interpolatedLower.data.value,
       } as FieldValueResponse;
     } else {
-      upperResponse = await fetchFieldValue(
-        normalizeIndices(plot.nodeUri) + '_error_upper',
-        downsamplingMethod,
-        downsamplingSize,
-        dataPlot?.dataType,
-      );
-
-      lowerResponse = await fetchFieldValue(
-        normalizeIndices(plot.nodeUri) + '_error_lower',
-        downsamplingMethod,
-        downsamplingSize,
-        dataPlot?.dataType,
-      );
+      [upperResponse, lowerResponse] = await Promise.all([
+        fetchFieldValue(
+          normalizeIndices(plot.nodeUri) + '_error_upper',
+          downsamplingMethod,
+          downsamplingSize,
+          dataPlot?.dataType,
+        ),
+        fetchFieldValue(
+          normalizeIndices(plot.nodeUri) + '_error_lower',
+          downsamplingMethod,
+          downsamplingSize,
+          dataPlot?.dataType,
+        ),
+      ]);
     }
 
     const defaultUpperYValue = getVectorData(

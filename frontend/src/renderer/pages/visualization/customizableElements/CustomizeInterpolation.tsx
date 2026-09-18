@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { DataGridPlot } from '../../../types';
 import {
   fetchDataPlot,
@@ -32,11 +32,16 @@ export const CustomizeInterpolation = ({
     customizedDataGrid.interpolated_method,
   );
   const [loading, { open, close }] = useDisclosure();
+  // Identifies the request in flight. A method selected while an earlier one is
+  // still running used to leave both writing to the grid, last response wins.
+  const currentRequest = useRef(0);
 
   /**
    * Update configuration with interpolated data (changes coordinates, plots & error bands)
    */
   const getInterpolatedData = async () => {
+    const requestId = currentRequest.current + 1;
+    currentRequest.current = requestId;
     try {
       open();
       const updatedDataPlot = structuredClone(
@@ -126,7 +131,11 @@ export const CustomizeInterpolation = ({
       );
       await reapplyAxisOrder(updatedDataPlot, wantedAxeIndexOrder);
 
-      // Save new configuration with interpolated data
+      // Save new configuration with interpolated data, unless another method
+      // was selected while this one was in flight.
+      if (currentRequest.current !== requestId) {
+        return;
+      }
       setCustomizedDataGrid({
         ...customizedDataGrid,
         coordinates: updatedDataPlot.coordinates,
@@ -141,7 +150,9 @@ export const CustomizeInterpolation = ({
         color: 'red',
       });
     } finally {
-      close();
+      if (currentRequest.current === requestId) {
+        close();
+      }
     }
   };
 
@@ -172,6 +183,9 @@ export const CustomizeInterpolation = ({
           value={selectedInterpolation}
           data={interpolationMethods.map((meth) => meth.value)}
           rightSection={loading ? <Loader size={16} /> : null}
+          // Selecting another method mid-flight refetched every plot in the
+          // grid a second time; the two results then raced.
+          disabled={loading}
           onChange={(selectedMethod) => {
             if (selectedMethod !== selectedInterpolation) {
               setSelectedInterpolation(selectedMethod || selectedInterpolation);

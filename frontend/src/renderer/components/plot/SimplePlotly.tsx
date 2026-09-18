@@ -2,7 +2,12 @@ import { Center, Grid, Group, Select, Text } from '@mantine/core';
 import { Layout } from 'plotly.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Plot from 'react-plotly.js';
-import { Configuration, Coordinates, DataGridPlot } from 'src/renderer/types';
+import {
+  Configuration,
+  Coordinates,
+  DataGridPlot,
+  DataPlotly,
+} from 'src/renderer/types';
 import { VerticalSlider } from '../verticalSlider';
 import { useIbexStore } from '../../stores';
 import {
@@ -47,9 +52,20 @@ export const SimplePlotly = ({
   );
 
   const dataToPlotWithErrorBands = useMemo(() => {
+    // getErrorsAreaToPlot writes connectgaps, customdata and hovertemplate onto
+    // each plot, and Plotly is handed the same objects, so they must not be the
+    // store's. Only the objects need copying though, plus the two vectors that
+    // are actually plotted: structuredClone used to deep-copy `yData` and every
+    // coordinate as well - megabytes, on every slider tick - when both are only
+    // read from here.
     return getErrorsAreaToPlot(
-      structuredClone(itemDataGrid.plot),
-      structuredClone(itemDataGrid.coordinates),
+      itemDataGrid.plot.map((plot) => {
+        const plotCopy = { ...plot };
+        if (Array.isArray(plot.x)) plotCopy.x = [...plot.x] as DataPlotly['x'];
+        if (Array.isArray(plot.y)) plotCopy.y = [...plot.y] as DataPlotly['y'];
+        return plotCopy;
+      }),
+      itemDataGrid.coordinates,
     );
   }, [itemDataGrid.plot, itemDataGrid.coordinates]);
   const coordsUsedInAxes: 1 | 2 = 1;

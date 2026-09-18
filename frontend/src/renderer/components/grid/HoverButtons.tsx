@@ -95,11 +95,16 @@ export const HoverButtons = React.memo(
 
     const updateDisplayErrorBands = useCallback(
       (newValue: boolean) => {
-        const updatedActive = structuredClone(active) as Configuration;
-        const selectedDataPlot = updatedActive.dataPlot.find(
-          (dataPlot) => dataPlot.i === data.i,
-        );
-        selectedDataPlot.displayErrorBand = newValue;
+        // Copy only the grid being changed: cloning the configuration here
+        // deep-copied every fetched array to flip one boolean.
+        const updatedActive: Configuration = {
+          ...active,
+          dataPlot: active.dataPlot.map((dataPlot) =>
+            dataPlot.i === data.i
+              ? { ...dataPlot, displayErrorBand: newValue }
+              : dataPlot,
+          ),
+        };
         updatedConfiguration(updatedActive);
       },
       [active],
@@ -182,13 +187,13 @@ export const HoverButtons = React.memo(
       setPlotTypeMenuOpened(false);
       setForcePlotTypeMenuOpened(false);
       setPlotMode(wantedType);
-      const updatedDataPlot: DataGridPlot[] = structuredClone(active.dataPlot);
-      const selectedDataPlot = updatedDataPlot.find(
-        (dataPlot) => dataPlot.i === data.i,
+      // Update plot type on that grid only, keeping every other grid's
+      // identity - and without deep-copying their data.
+      const updatedDataPlot: DataGridPlot[] = active.dataPlot.map((dataPlot) =>
+        dataPlot.i === data.i
+          ? { ...dataPlot, selectedPlotMode: wantedType }
+          : dataPlot,
       );
-
-      // Update plot type
-      selectedDataPlot.selectedPlotMode = wantedType;
 
       const updatedActive: Configuration = {
         ...active,

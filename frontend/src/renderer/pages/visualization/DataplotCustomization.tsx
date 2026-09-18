@@ -119,10 +119,11 @@ export const DataplotCustomization = () => {
    * Handle close of customization
    */
   const closeWithoutSaving = useCallback(() => {
-    const updatedActive: Configuration = structuredClone(
-      active,
-    ) as Configuration;
-    updatedActive.customizedGridLayout = null;
+    // Closing the panel changes one field; there is nothing to deep-copy.
+    const updatedActive: Configuration = {
+      ...active,
+      customizedGridLayout: null,
+    };
     updatedConfiguration(updatedActive);
   }, [active]);
 
