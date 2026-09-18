@@ -96,3 +96,30 @@ components no longer subscribe to the store and the panel is memoized, but the
 configuration object is still replaced wholesale on every write, so
 `VisualizationPlot` — which does subscribe — re-renders and rebuilds the grid,
 and react-grid-layout clones its children on the way through.
+
+## After fixing the layout write cycle (stage 4)
+
+| Scenario                   | requests | redraws | renders | ms   |
+| -------------------------- | -------- | ------- | ------- | ---- |
+| toggle edit mode (UI flag) | 0        | **1**   | **4**   | 1015 |
+| coordinate slider, 2 steps | 0        | 6       | 28      | 1583 |
+| metadata panel, first open | 2        | 3       | 6       | 1024 |
+| metadata panel, revisit    | 0        | 9       | 44      | 1687 |
+| idle (no interaction)      | 0        | 0       | 0       | 2126 |
+
+**All four guards pass.** Toggling one panel's edit flag now redraws only the
+panel that was toggled; the untouched heatmap redraws 0 times, down from 6 at
+the original baseline. Component renders for that scenario: 42 → 4.
+
+The cause was not the store after all. Entering edit mode sets `static` on the
+grid, which changes the layout react-grid-layout derives from its children, so
+RGL reports `onLayoutChange` — and `VisualizationPlot.handleUpdateLayout`
+rebuilt *every* grid object from that report, which defeated the `memo` added in
+the previous stage. It now keeps the identity of grids that did not move and
+writes nothing at all when the report changes nothing (which also stops the
+configuration being flagged unsaved by a no-op).
+
+Note for the store split: `VisualizationPlot` subscribes to `active`, not to
+`active.dataPlot`, because `handleNewPlot` (`utils/plot.ts:235`) pushes a new
+grid into that array **in place**. A narrower selector never fires when a panel
+is added, and memoizing the RGL children on it renders an empty canvas.
