@@ -65,66 +65,15 @@ export const Heatmap2D = ({
   const [y, setY] = useState<number[]>([]);
   const [z, setZ] = useState<(number | string)[][]>([]);
   const plotRef = useRef<Plot | null>(null);
-  const [shouldForceRatio, setShouldForceRatio] = useState<boolean>(false);
-  const [layoutPlot, setLayoutPlot] = useState<Partial<Layout>>({
-    autosize: true,
-    scene: {
-      xaxis: { title: { text: xAxis?.name || '' } },
-      yaxis: { title: { text: yAxis?.name || '' } },
-      zaxis: { title: { text: zAxis?.name || '' } },
-    },
-    xaxis: {
-      exponentformat: 'power',
-      showexponent: 'all',
-      separatethousands: true,
-      scaleanchor: null,
-      scaleratio: null,
-      zeroline: false,
-      showgrid: itemDataGrid.displayGrid,
-    },
-    yaxis: {
-      exponentformat: 'power',
-      showexponent: 'all',
-      separatethousands: true,
-      zeroline: false,
-      showgrid: itemDataGrid.displayGrid,
-    },
-    modebar: {
-      orientation: 'v',
-    },
-    legend: {
-      x: 1.3,
-      y: 1,
-      groupclick: 'togglegroup',
-      tracegroupgap: 0,
-    },
-  });
   const selectedPlot = itemDataGrid.plot[parseInt(plotIndex)];
-  // Custom hook used for trigger some useEffects to update the layout
-  usePlotLayout({
-    itemDataGrid,
-    setLayoutPlot,
-  });
+  // Axis types and grid display, derived rather than pushed into the layout by
+  // effects: Plotly compares `layout` by reference, so every push was a redraw.
+  const axisLayout = usePlotLayout({ itemDataGrid });
+  // What the user changed with the mode bar (zoom, pan, autorange); merged last
+  // so rebuilding the layout never discards it.
+  const [userRelayout, setUserRelayout] = useState<Partial<Layout>>({});
   const [title, setTitle] = useState(itemDataGrid.title);
   const layoutPlotWidth = showSliders ? width * 0.8 : width;
-
-  /**
-   * Rule to determine if we have to force ratio.
-   * The value is initialized once at grid creation and only changed via the customization switch.
-   */
-  useEffect(() => {
-    setShouldForceRatio(itemDataGrid.forceXyRatio);
-  }, [itemDataGrid.forceXyRatio]);
-
-  /**
-   * Update layout to force ratio or not
-   */
-  useEffect(() => {
-    const updatedLayoutPlot = structuredClone(layoutPlot);
-    updatedLayoutPlot.xaxis.scaleanchor = shouldForceRatio ? 'y' : null;
-    updatedLayoutPlot.xaxis.scaleratio = shouldForceRatio ? 1 : null;
-    setLayoutPlot(updatedLayoutPlot);
-  }, [shouldForceRatio]);
 
   /**
    * Update the editable title when layout title change
@@ -149,11 +98,6 @@ export const Heatmap2D = ({
       return;
     }
 
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      title: { text: title },
-    }));
-
     const updatedDataPlot: DataGridPlot[] = active.dataPlot.map(
       (item: DataGridPlot) => {
         if (item.i === itemDataGrid.i) {
@@ -175,12 +119,12 @@ export const Heatmap2D = ({
     updatedConfiguration(newActive);
   }, [title]);
 
-  const handleRelayout = (newLayout: Partial<Layout>) => {
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
+  const handleRelayout = useCallback((newLayout: Partial<Layout>) => {
+    setUserRelayout((previous) => ({
+      ...previous,
       ...newLayout, // update the layout with new values
     }));
-  };
+  }, []);
 
   const init3DAxis = useCallback(async () => {
     // Transpose data matrix to orign values
@@ -216,17 +160,6 @@ export const Heatmap2D = ({
       name: yCoord.name,
       unit: yCoord.unit,
     };
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      yaxis: {
-        ...prevLayout.yaxis,
-        type:
-          typeof getFirstArrayValueFromShape(yCoord.data, yCoord.shape)[0] ===
-          'string'
-            ? 'category'
-            : 'linear',
-      },
-    }));
     setYAxis(yAxisAtHeatmap);
   }, [itemDataGrid.plot, itemDataGrid.coordinates, plotIndex]);
 
@@ -236,53 +169,83 @@ export const Heatmap2D = ({
     init3DAxis();
   }, [itemDataGrid.plot, itemDataGrid.coordinates, plotIndex]);
 
-  /* Update the layout of the plot */
-  useEffect(() => {
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      title: { text: itemDataGrid.title },
-      height: height,
-      width: layoutPlotWidth - 75,
-    }));
-  }, [itemDataGrid, width, height]);
-
   /**
-   * Update the layout xAxis
+   * The whole Plotly layout, derived in one go: the axis titles from the axes
+   * `init3DAxis` resolved, the axis types and the grid from `usePlotLayout`,
+   * the 1:1 ratio from the grid's own rule, and the user's mode bar changes
+   * merged last.
    */
-  useEffect(() => {
+  const layoutPlot = useMemo<Partial<Layout>>(() => {
     const XTitle = xAxis?.name
       ? `${xAxis?.name} ${(xAxis?.unit && '[' + xAxis.unit + ']') || ''}`
       : '';
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      xaxis: {
-        ...prevLayout.xaxis,
-        title: {
-          ...prevLayout.xaxis?.title,
-          text: XTitle,
-        },
-      },
-    }));
-  }, [xAxis]);
-
-  /**
-   * Update the layout yAxis
-   */
-  useEffect(() => {
     const YTitle = yAxis?.name
       ? `${yAxis?.name} ${(yAxis?.unit && '[' + yAxis.unit + ']') || ''}`
       : '';
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      yaxis: {
-        ...prevLayout.yaxis,
-        title: {
-          ...prevLayout.yaxis?.title,
-          text: YTitle,
-        },
+
+    // A category y axis whenever the second coordinate holds strings - what
+    // init3DAxis used to push into the layout once it had resolved the axes.
+    const yCoord = itemDataGrid.coordinates?.find(
+      (coord) => coord.axeIndex === 1,
+    );
+    const yTypeFromCoordinate = yCoord
+      ? typeof getFirstArrayValueFromShape(yCoord.data, yCoord.shape)[0] ===
+        'string'
+        ? 'category'
+        : 'linear'
+      : undefined;
+
+    return {
+      autosize: true,
+      title: { text: itemDataGrid.title },
+      height: height,
+      width: layoutPlotWidth - 75,
+      scene: {
+        xaxis: { title: { text: '' } },
+        yaxis: { title: { text: '' } },
+        zaxis: { title: { text: '' } },
       },
-    }));
-  }, [yAxis]);
+      xaxis: {
+        exponentformat: 'power',
+        showexponent: 'all',
+        separatethousands: true,
+        zeroline: false,
+        ...axisLayout.xaxis,
+        scaleanchor: itemDataGrid.forceXyRatio ? 'y' : null,
+        scaleratio: itemDataGrid.forceXyRatio ? 1 : null,
+        title: { text: XTitle },
+      },
+      yaxis: {
+        exponentformat: 'power',
+        showexponent: 'all',
+        separatethousands: true,
+        zeroline: false,
+        ...axisLayout.yaxis,
+        ...(yTypeFromCoordinate ? { type: yTypeFromCoordinate } : {}),
+        title: { text: YTitle },
+      },
+      modebar: {
+        orientation: 'v',
+      },
+      legend: {
+        x: 1.3,
+        y: 1,
+        groupclick: 'togglegroup',
+        tracegroupgap: 0,
+      },
+      ...userRelayout,
+    };
+  }, [
+    xAxis,
+    yAxis,
+    itemDataGrid.title,
+    itemDataGrid.forceXyRatio,
+    itemDataGrid.coordinates,
+    height,
+    layoutPlotWidth,
+    axisLayout,
+    userRelayout,
+  ]);
 
   useEffect(() => {
     if (data3D && selectedPlot) {

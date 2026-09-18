@@ -123,3 +123,26 @@ Note for the store split: `VisualizationPlot` subscribes to `active`, not to
 `active.dataPlot`, because `handleNewPlot` (`utils/plot.ts:235`) pushes a new
 grid into that array **in place**. A narrower selector never fires when a panel
 is added, and memoizing the RGL children on it renders an empty canvas.
+
+## After deriving the Plotly layout (stage 5)
+
+| Scenario                   | requests | redraws | renders | ms   |
+| -------------------------- | -------- | ------- | ------- | ---- |
+| toggle edit mode (UI flag) | 0        | 1       | 4       | 1023 |
+| coordinate slider, 2 steps | 0        | 6       | 28      | 1570 |
+| metadata panel, first open | 2        | **2**   | **4**   | 1012 |
+| metadata panel, revisit    | 0        | **6**   | 40      | 1548 |
+| idle (no interaction)      | 0        | 0       | 0       | 2126 |
+
+The layout used to be assembled by fifteen effects (seven in `SimplePlotly`,
+five in `usePlotLayout`, six in `Heatmap2D`), each calling `setLayoutPlot` and
+so handing `react-plotly.js` a new `layout` identity — one redraw apiece as a
+panel appeared. It is now a single `useMemo` per component, with the user's mode
+bar changes kept in state and merged last so a rebuild never discards a zoom.
+
+Redraws when a panel appears: 9 → 6 on revisit, 3 → 2 on first open. Against the
+original baseline, reopening the metadata panel costs 19 → 6 redraws and 72 → 40
+renders.
+
+The remaining 6 on the slider scenario are data-driven, not layout-driven: each
+tick rebuilds the plot arrays.

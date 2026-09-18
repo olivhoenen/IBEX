@@ -1,90 +1,85 @@
-import { useEffect } from 'react';
-import { AxisType } from 'plotly.js';
-import { DataGridPlot } from 'src/renderer/types';
-import { Layout } from 'plotly.js';
+import { useEffect, useMemo } from 'react';
+import { AxisType, Layout } from 'plotly.js';
+import { Configuration, DataGridPlot } from 'src/renderer/types';
+import { useIbexStore } from '../../../stores';
 
 interface UsePlotLayoutParams {
   itemDataGrid: DataGridPlot;
-  setLayoutPlot: (value: React.SetStateAction<Partial<Layout>>) => void;
 }
 
+/** Type of the values actually plotted on x, which decides a category axis. */
+const typeOfXData = (itemDataGrid: DataGridPlot): string | undefined =>
+  itemDataGrid.plot[0]?.x ? typeof itemDataGrid.plot[0].x[0] : undefined;
+
+/**
+ * Axis type for x: string data forces a category axis, and an axis left on
+ * `category` goes back to `linear` as soon as the data is numeric again.
+ * Otherwise the configured type wins.
+ */
+const xAxisTypeOf = (itemDataGrid: DataGridPlot): AxisType => {
+  const configured = itemDataGrid.xAxisData?.type as AxisType | undefined;
+  const fromData = typeOfXData(itemDataGrid);
+
+  if (fromData === 'string') return 'category';
+  if (configured === 'category' && fromData === 'number') return 'linear';
+  return configured || 'linear';
+};
+
+/**
+ * The parts of a Plotly layout both plot components derive the same way.
+ *
+ * This used to be five `useEffect`s calling `setLayoutPlot`. Since
+ * react-plotly.js compares `layout` by reference, each of them was a separate
+ * redraw of the panel; they are all pure functions of `itemDataGrid`, so they
+ * are derived in one memo instead and the caller merges the result into its own
+ * layout.
+ */
 export function usePlotLayout({
   itemDataGrid,
-  setLayoutPlot,
-}: UsePlotLayoutParams) {
-  // Grid
-  useEffect(() => {
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      xaxis: {
-        ...prevLayout.xaxis,
-        showgrid: itemDataGrid.displayGrid,
-      },
-      yaxis: {
-        ...prevLayout.yaxis,
-        showgrid: itemDataGrid.displayGrid,
-      },
-    }));
-  }, [itemDataGrid.displayGrid, setLayoutPlot]);
+}: UsePlotLayoutParams): Partial<Layout> {
+  const displayGrid = itemDataGrid.displayGrid;
+  const xType = xAxisTypeOf(itemDataGrid);
+  const yType = (itemDataGrid.yAxisData?.type as AxisType) || 'linear';
+  const y2Type = (itemDataGrid.y2AxisData?.type as AxisType) || 'linear';
 
-  // X axis
+  // Keep the configured x axis type in step with the data. It is persisted with
+  // the configuration and read back by the customization panel, so it cannot
+  // just live in the layout. This used to assign to `itemDataGrid.xAxisData`
+  // directly, i.e. mutate store state from an effect.
   useEffect(() => {
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      xaxis: {
-        ...prevLayout.xaxis,
-        type:
-          (itemDataGrid?.xAxisData?.type as AxisType) || prevLayout.xaxis?.type,
-      },
-    }));
-  }, [itemDataGrid.xAxisData?.type, setLayoutPlot]);
+    // Only the two transitions the old effect handled: nothing is written when
+    // the configured type is simply absent.
+    const fromData = typeOfXData(itemDataGrid);
+    const configured = itemDataGrid.xAxisData?.type;
+    const forcedType =
+      fromData === 'string'
+        ? 'category'
+        : configured === 'category' && fromData === 'number'
+          ? 'linear'
+          : null;
+    if (!forcedType) return;
 
-  // Y axis
-  useEffect(() => {
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      yaxis: {
-        ...prevLayout.yaxis,
-        type:
-          (itemDataGrid?.yAxisData?.type as AxisType) || prevLayout.yaxis?.type,
-      },
-    }));
-  }, [itemDataGrid.yAxisData?.type, setLayoutPlot]);
+    const { active, updatedConfiguration } = useIbexStore.getState();
+    const current = active?.dataPlot.find((item) => item.i === itemDataGrid.i);
+    if (!current?.xAxisData || current.xAxisData.type === forcedType) return;
 
-  // Y2 axis
-  useEffect(() => {
-    setLayoutPlot((prevLayout) => ({
-      ...prevLayout,
-      yaxis2: {
-        ...prevLayout.yaxis2,
-        type:
-          (itemDataGrid?.y2AxisData?.type as AxisType) ||
-          prevLayout.yaxis2?.type,
-      },
-    }));
-  }, [itemDataGrid.y2AxisData?.type, setLayoutPlot]);
+    const newActive: Configuration = {
+      ...active,
+      dataPlot: active.dataPlot.map((item) =>
+        item.i === itemDataGrid.i
+          ? { ...item, xAxisData: { ...item.xAxisData, type: forcedType } }
+          : item,
+      ),
+    };
+    updatedConfiguration(newActive);
+  }, [itemDataGrid.i, xType]);
 
-  useEffect(() => {
-    const newTypeOfX = itemDataGrid.plot[0]?.x
-      ? typeof itemDataGrid.plot[0]?.x[0]
-      : undefined;
-    if (newTypeOfX === 'string') {
-      // Update x axis to category type if it become a string
-      setLayoutPlot((prevLayout) => ({
-        ...prevLayout,
-        xaxis: { ...prevLayout.xaxis, type: 'category' },
-      }));
-      itemDataGrid.xAxisData.type = 'category';
-    } else if (
-      itemDataGrid.xAxisData?.type === 'category' &&
-      newTypeOfX === 'number'
-    ) {
-      // Update x axis to linear type if it become a number
-      setLayoutPlot((prevLayout) => ({
-        ...prevLayout,
-        xaxis: { ...prevLayout.xaxis, type: 'linear' },
-      }));
-      itemDataGrid.xAxisData.type = 'linear';
-    }
-  }, [itemDataGrid.xAxisData.name]);
+  return useMemo(
+    () => ({
+      xaxis: { showgrid: displayGrid, type: xType },
+      yaxis: { showgrid: displayGrid, type: yType },
+      yaxis2: { showgrid: displayGrid, type: y2Type },
+    }),
+    [displayGrid, xType, yType, y2Type],
+  );
 }
