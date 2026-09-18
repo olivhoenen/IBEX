@@ -1,7 +1,6 @@
 import Plot from 'react-plotly.js';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import * as tf from '@tensorflow/tfjs';
-import { Layout } from 'plotly.js';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Data, Layout } from 'plotly.js';
 import {
   Axis,
   AxisData,
@@ -23,6 +22,7 @@ import {
 import classes from './Heatmap2D.module.css';
 import { useIbexStore } from '../../stores';
 import { countRedraw, countRender } from '../../utils/perf';
+import { getPlotConfig } from './plotConfig';
 import { NoDataForURI } from '.';
 import { usePlotLayout } from './hooks/usePlotLayout';
 import { IconLink } from '@tabler/icons-react';
@@ -283,17 +283,35 @@ export const Heatmap2D = ({
   useEffect(() => {
     if (data3D && selectedPlot) {
       // Update x, y & z useStates to plot heatmap
-      setX(
-        getArrayValueFromDependance(itemDataGrid.coordinates, 0) as number[],
-      );
-      setY(
-        getArrayValueFromDependance(itemDataGrid.coordinates, 1) as number[],
-      );
+      // These vectors index into the store's arrays, and Plotly keeps and
+      // mutates whatever it is handed. Copy once here - this effect only runs
+      // when the data or the coordinates change - rather than copying the whole
+      // matrix again on every render.
+      // `getArrayValueFromDependance` returns undefined for an invalid index,
+      // so copy only when there is something to copy.
+      const xValues = getArrayValueFromDependance(
+        itemDataGrid.coordinates,
+        0,
+      ) as number[];
+      const yValues = getArrayValueFromDependance(
+        itemDataGrid.coordinates,
+        1,
+      ) as number[];
+      setX(Array.isArray(xValues) ? [...xValues] : xValues);
+      setY(Array.isArray(yValues) ? [...yValues] : yValues);
       // Get matrix [[]] needed for z in 3D
       let zData: AxisData | number | string | Complex = selectedPlot.yData;
 
-      const tensor = tf.tensor(zData);
-      const depthToGoThrough = tensor.shape.length - 2; // shape length - 2 because z need a vector of depth 2 ([][])
+      // Depth of the nested array. Replaces a tf.tensor() that was built only
+      // to read shape.length: it copied the entire matrix and was never
+      // disposed.
+      let depth = 0;
+      let probe: unknown = zData;
+      while (Array.isArray(probe)) {
+        depth += 1;
+        probe = probe[0];
+      }
+      const depthToGoThrough = depth - 2; // z needs a vector of depth 2 ([][])
       for (let index = 0; index < depthToGoThrough; index++) {
         if (Array.isArray(zData)) {
           zData =
@@ -306,7 +324,16 @@ export const Heatmap2D = ({
             ];
         }
       }
-      setZ(zData as (number | string)[][]);
+      // zData is only a matrix once the loop above has walked down to depth 2;
+      // for malformed data it can still be a scalar, which must pass through
+      // untouched exactly as it did before.
+      setZ(
+        Array.isArray(zData)
+          ? (zData as (number | string)[][]).map((row) =>
+              Array.isArray(row) ? [...row] : row,
+            )
+          : (zData as unknown as (number | string)[][]),
+      );
     }
   }, [data3D, itemDataGrid.coordinates]);
 
@@ -315,6 +342,58 @@ export const Heatmap2D = ({
       setAre3DAxisInit(true);
     }
   }, [data3D, x, y, z]);
+
+  /**
+   * Plotly compares `data` by reference, so this array must keep its identity
+   * while nothing it depends on changes. `x`, `y` and `z` already hold private
+   * copies, made where they are computed, so nothing is copied here.
+   */
+  const plotData = useMemo<Data[]>(
+    () => [
+      {
+        type: forcedPlotType
+          ? forcedPlotType
+          : itemDataGrid.selectedPlotMode === 'Heatmap'
+            ? 'heatmap'
+            : itemDataGrid.selectedPlotMode === 'Contour'
+              ? 'contour'
+              : 'heatmap',
+        contours: {
+          coloring: 'lines',
+        },
+        colorscale: selectedPlot?.customPreferences?.colorscale || 'Viridis',
+        colorbar: {
+          title: {
+            text: zAxis?.name
+              ? `${zAxis?.name} ${(zAxis?.unit && '[' + zAxis.unit + ']') || ''}`
+              : '',
+          },
+          exponentformat: 'power',
+          showexponent: 'all',
+          separatethousands: true,
+        },
+        hovertemplate:
+          'x: %{x}<br>' + 'y: %{y}<br>' + 'z: %{z:,.6g}<extra></extra>',
+        x,
+        y,
+        z,
+      },
+
+      // Add geometries in contour type
+      ...(itemDataGrid?.geometries ?? []),
+    ],
+    [
+      forcedPlotType,
+      itemDataGrid.selectedPlotMode,
+      itemDataGrid?.geometries,
+      selectedPlot?.customPreferences?.colorscale,
+      zAxis?.name,
+      zAxis?.unit,
+      x,
+      y,
+      z,
+    ],
+  );
 
   return (
     <Grid
@@ -450,49 +529,8 @@ export const Heatmap2D = ({
         >
           <Plot
             ref={plotRef}
-            data={[
-              {
-                type: forcedPlotType
-                  ? forcedPlotType
-                  : itemDataGrid.selectedPlotMode === 'Heatmap'
-                    ? 'heatmap'
-                    : itemDataGrid.selectedPlotMode === 'Contour'
-                      ? 'contour'
-                      : 'heatmap',
-                contours: {
-                  coloring: 'lines',
-                },
-                colorscale:
-                  selectedPlot?.customPreferences?.colorscale || 'Viridis',
-                colorbar: {
-                  title: {
-                    text: zAxis?.name
-                      ? `${zAxis?.name} ${(zAxis?.unit && '[' + zAxis.unit + ']') || ''}`
-                      : '',
-                  },
-                  exponentformat: 'power',
-                  showexponent: 'all',
-                  separatethousands: true,
-                },
-                hovertemplate:
-                  'x: %{x}<br>' + 'y: %{y}<br>' + 'z: %{z:,.6g}<extra></extra>',
-                x: [...x],
-                y: [...y],
-                z: z.map((row) => [...row]),
-              },
-
-              // Add geometries in contour type
-              ...(itemDataGrid?.geometries ?? []),
-            ]}
-            config={{
-              autosizable: false,
-              staticPlot: !itemDataGrid.static,
-              scrollZoom: true,
-              displayModeBar: true,
-              showTips: true,
-              displaylogo: false,
-              modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-            }}
+            data={plotData}
+            config={getPlotConfig(itemDataGrid.static)}
             layout={layoutPlot}
             onRelayout={handleRelayout}
             onAfterPlot={handleAfterPlot}

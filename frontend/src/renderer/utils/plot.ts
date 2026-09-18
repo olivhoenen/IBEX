@@ -2155,12 +2155,20 @@ export const reapplyAxisOrder = async (
 export function getVectorData(coordinates: Coordinates[], yData: AxisData) {
   const coordinatesLength: number = coordinates.length;
 
-  // Extract only matrix indexes
-  const matrixIndexes = structuredClone(coordinates)
+  // Extract only matrix indexes.
+  // Only `axeIndex` and `valueIndex` are read, so project onto those two
+  // numbers before sorting: cloning the coordinates would deep-copy every
+  // coordinate's full `data` array, and this runs on every slider tick and on
+  // the render path of every plot.
+  const matrixIndexes = coordinates
+    .map((coord: Coordinates) => ({
+      axeIndex: coord.axeIndex,
+      valueIndex: coord.valueIndex,
+    }))
     .sort(compareByAxeIndex)
     .reverse()
-    .filter((coord: Coordinates) => coord.axeIndex !== 0)
-    .map((coord: Coordinates) => coord.valueIndex);
+    .filter((coord) => coord.axeIndex !== 0)
+    .map((coord) => coord.valueIndex);
 
   // Retrieve vector to plot
   /* eslint-disable  @typescript-eslint/no-explicit-any */
@@ -2203,7 +2211,10 @@ export function getErrorYVectors(plot: DataPlotly, coordinates: Coordinates[]) {
  * @param b The second Coordinates object.
  * @returns A negative number if a's axeIndex is less than b's, a positive number if greater, or 0 if equal.
  */
-export function compareByAxeIndex(a: Coordinates, b: Coordinates) {
+export function compareByAxeIndex(
+  a: { axeIndex: number },
+  b: { axeIndex: number },
+) {
   if (a.axeIndex < b.axeIndex) {
     return -1;
   } else if (a.axeIndex > b.axeIndex) {
@@ -2256,17 +2267,56 @@ export function hasAtLeastOneValidValue(arr: AxisData): boolean {
 export function isMatrixPlottable(value: AxisData): boolean {
   if (value === undefined) return false;
 
-  try {
-    const tensor = tf.tensor(value);
-    const shape = tensor.shape;
-    const lastDim = shape[shape.length - 1];
+  const lastDim = getLastDimLength(value);
 
-    // Check if matrix is not empty & get at least one valide value
-    return lastDim !== 0 && hasAtLeastOneValidValue(value);
-  } catch {
-    // If tensor fails (irregular shape, etc.)
-    return false;
+  // Check if matrix is not empty & get at least one valide value
+  return lastDim !== null && lastDim !== 0 && hasAtLeastOneValidValue(value);
+}
+
+/**
+ * @description Length of the innermost dimension of a rectangular nested array,
+ * or `null` when the input is ragged, mixed-depth or holds non-plottable
+ * leaves (complex `{r, i}` pairs, objects).
+ *
+ * This replaces a `tf.tensor(value)` whose only outputs were "does it build"
+ * and "what is the last dimension". Building a tensor copied the whole array
+ * into a typed array on every call — and it was called from the render body of
+ * both plot components, several times per render, without ever being disposed.
+ * A plain scan allocates nothing and keeps exactly the same semantics,
+ * including returning `null` where `tf.tensor` used to throw.
+ */
+function getLastDimLength(value: AxisData): number | null {
+  if (!Array.isArray(value)) return null;
+  if (value.length === 0) return 0;
+
+  const first = value[0];
+  if (!Array.isArray(first)) {
+    // Innermost level. tf.tensor accepted only numbers or only strings, and
+    // threw on anything else (including complex {r, i} pairs) or on a mix of
+    // the two, so reproduce both rules.
+    let leafType: 'number' | 'string' | null = null;
+    for (const leaf of value as unknown[]) {
+      if (Array.isArray(leaf)) return null; // mixed depth
+      if (leaf === null || leaf === undefined) continue; // filled in later
+      const type = typeof leaf;
+      if (type !== 'number' && type !== 'string') return null;
+      if (leafType === null) leafType = type;
+      else if (leafType !== type) return null; // mixed scalar types
+    }
+    return value.length;
   }
+
+  // Nested level: every child must be an array of the same, consistent shape.
+  let lastDim: number | null = null;
+  for (const child of value as AxisData[]) {
+    if (!Array.isArray(child)) return null; // mixed depth
+    if (child.length !== (first as unknown[]).length) return null; // ragged
+    const childLastDim = getLastDimLength(child);
+    if (childLastDim === null) return null;
+    if (lastDim === null) lastDim = childLastDim;
+    else if (lastDim !== childLastDim) return null;
+  }
+  return lastDim;
 }
 
 /**

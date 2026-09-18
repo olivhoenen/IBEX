@@ -16,6 +16,7 @@ import {
 } from '../../utils';
 import classes from './SimplePlotly.module.css';
 import { countRedraw, countRender } from '../../utils/perf';
+import { getPlotConfig } from './plotConfig';
 import { NoDataForURI } from '../plot';
 import { usePlotLayout } from './hooks/usePlotLayout';
 import { IconLink } from '@tabler/icons-react';
@@ -476,15 +477,7 @@ export const SimplePlotly = ({
             <Plot
               className={classes.simplePlot}
               data={dataToPlotWithErrorBands}
-              config={{
-                autosizable: false,
-                staticPlot: !itemDataGrid.static,
-                scrollZoom: true,
-                displayModeBar: true,
-                showTips: true,
-                displaylogo: false,
-                modeBarButtonsToRemove: ['lasso2d', 'select2d'],
-              }}
+              config={getPlotConfig(itemDataGrid.static)}
               layout={layoutPlot}
               onRelayout={handleRelayout}
               onAfterPlot={handleAfterPlot}

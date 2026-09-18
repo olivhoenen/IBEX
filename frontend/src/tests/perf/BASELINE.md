@@ -35,13 +35,13 @@ effect loops.
 
 ## After the session request cache (stage 1)
 
-| Scenario | requests | redraws | renders | ms |
-|---|---|---|---|---|
-| toggle edit mode (UI flag) | 0 | 11 | 42 | 1251 |
-| coordinate slider, 2 steps | 0 | 12 | 40 | 1637 |
-| metadata panel, first open | 4 → **2** | 3 | 6 | 1031 |
-| metadata panel, revisit | 6 → **1** | 19 → 14 | 72 → 58 | 1802 |
-| idle (no interaction) | 0 | 0 | 0 | 2127 |
+| Scenario                   | requests  | redraws | renders | ms   |
+| -------------------------- | --------- | ------- | ------- | ---- |
+| toggle edit mode (UI flag) | 0         | 11      | 42      | 1251 |
+| coordinate slider, 2 steps | 0         | 12      | 40      | 1637 |
+| metadata panel, first open | 4 → **2** | 3       | 6       | 1031 |
+| metadata panel, revisit    | 6 → **1** | 19 → 14 | 72 → 58 | 1802 |
+| idle (no interaction)      | 0         | 0       | 0       | 2127 |
 
 Guard 3 now passes: reopening a metadata tab issues **no** `plot_data` request.
 The single remaining request on revisit is `/ids_info/array_summary`, which is
@@ -50,3 +50,27 @@ a different endpoint and a genuine first-time call for that tab.
 The two cross-panel redraw guards still fail, as expected: they are caused by
 the store replacing the whole configuration on every write, which stages 3 and
 4 address. Nothing in the fetch layer can fix them.
+
+## After the render-path fixes (stage 2)
+
+| Scenario | requests | redraws | renders | ms |
+|---|---|---|---|---|
+| toggle edit mode (UI flag) | 0 | **2** | 42 | 1145 |
+| coordinate slider, 2 steps | 0 | **6** | 40 | 1546 |
+| metadata panel, first open | 2 | 3 | 6 | 1106 |
+| metadata panel, revisit | **0** | **9** | 52 | 1679 |
+| idle (no interaction) | 0 | 0 | 0 | 2130 |
+
+Three of the four guards now pass. Redraws against the original baseline:
+toggling a UI flag 11 → 2, two slider steps 12 → 6, reopening the metadata
+panel 19 → 9, and its backend requests 6 → 0.
+
+The slider guard passes: stepping the heatmap's time slider no longer redraws
+the 1-D panel at all.
+
+One guard still fails, and it is the honest remainder: toggling one panel's
+edit flag still causes **1** redraw of the untouched heatmap panel (it was 6).
+That last one cannot be fixed from the render path — the store replaces the
+whole configuration on every write, so the sibling panel genuinely receives new
+props. Stages 3 and 4 (the data/config split and selector subscriptions) are
+what close it.

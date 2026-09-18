@@ -81,6 +81,22 @@ export async function resetAppState() {
     }
   }
 
+  // Dismiss notifications left by the previous test. They expire on their own
+  // after a few seconds, so the suite used to rely on being slow enough for
+  // that to happen between tests - which stops being true as the app gets
+  // faster, and makes a test that counts notifications see the previous one's.
+  await getDriver().executeScript(() => {
+    document
+      .querySelectorAll<HTMLElement>('.mantine-Notification-closeButton')
+      .forEach((button) => button.click());
+  });
+  await getDriver().wait(async () => {
+    const remaining = await getDriver().executeScript(
+      () => document.querySelectorAll('.mantine-Notification-root').length,
+    );
+    return remaining === 0;
+  }, 10000);
+
   const isEmpty = async () => {
     const state = await getTestState();
     return (state?.configurations?.length ?? 0) === 0 && !state?.active;
