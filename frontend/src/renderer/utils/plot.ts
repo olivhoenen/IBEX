@@ -21,7 +21,7 @@ import {
   URITreeNodeData,
   GeometryInfos,
 } from '../types';
-import { ScatterData } from 'plotly.js';
+import { Layout, LayoutAxis, ScatterData } from 'plotly.js';
 import {
   buildSmoothingRequest,
   fetchDataPlot,
@@ -1334,6 +1334,21 @@ export const fetchGeometries = async (
 };
 
 /**
+ * Tells a node that carries no error bands from a genuine failure.
+ *
+ * Both are expected while plotting: the backend answers 464 "No data for ..."
+ * for an error node that exists but is empty, and 404 "... has no attribute
+ * ..." for one the IDS does not define at all.
+ */
+const isMissingErrorNode = (error: unknown): boolean => {
+  const message = String(error);
+  return (
+    (message.includes('No data for') || message.includes('has no attribute')) &&
+    (message.includes('_error_upper') || message.includes('_error_lower'))
+  );
+};
+
+/**
  * Get & return error bands of provided uri & dataPlot id
  * @param dataPlot Datagrid containing the targeted uri
  * @param uri Uri to get the data
@@ -1370,88 +1385,85 @@ export const fetchErrorBands = async (
     const interpolationMethod: string =
       forcedInterpolationMethod || dataPlot?.interpolated_method;
 
-    let upperResponse, lowerResponse: FieldValueResponse;
+    /**
+     * Fetches one of the two band nodes, or resolves to `undefined` when that
+     * node simply is not there.
+     *
+     * The upper and lower bands are two independent nodes, and a quantity may
+     * carry only one of them: the IMAS convention is that a *symmetric* error
+     * is stored as `_error_upper` alone. Fetching them together used to mean
+     * that one missing node threw away the one that was present, leaving the
+     * trace with no band at all - `getErrorsAreaToPlot` has always known how to
+     * mirror a single band around the trace, it was never given one.
+     */
+    const fetchErrorBand = async (
+      suffix: '_error_upper' | '_error_lower',
+    ): Promise<FieldValueResponse | undefined> => {
+      const bandUri = normalizeIndices(plot.nodeUri) + suffix;
+      try {
+        if (urisToInterpolate.length) {
+          const interpolated = await fetchDataPlot(
+            bandUri,
+            downsamplingMethod,
+            downsamplingSize,
+            dataPlot?.dataType,
+            urisToInterpolate,
+            interpolationMethod,
+          );
+          return { value: interpolated.data.value } as FieldValueResponse;
+        }
+        return await fetchFieldValue(
+          bandUri,
+          downsamplingMethod,
+          downsamplingSize,
+          dataPlot?.dataType,
+        );
+      } catch (error) {
+        if (isMissingErrorNode(error)) {
+          return undefined;
+        }
+        throw error;
+      }
+    };
 
-    // Get error bands
-    // The upper and lower bands are two independent nodes.
-    if (urisToInterpolate.length) {
-      const [interpolatedUpper, interpolatedLower] = await Promise.all([
-        fetchDataPlot(
-          normalizeIndices(plot.nodeUri) + '_error_upper',
-          downsamplingMethod,
-          downsamplingSize,
-          dataPlot?.dataType,
-          urisToInterpolate,
-          interpolationMethod,
-        ),
-        fetchDataPlot(
-          normalizeIndices(plot.nodeUri) + '_error_lower',
-          downsamplingMethod,
-          downsamplingSize,
-          dataPlot?.dataType,
-          urisToInterpolate,
-          interpolationMethod,
-        ),
-      ]);
-      upperResponse = {
-        value: interpolatedUpper.data.value,
-      } as FieldValueResponse;
-      lowerResponse = {
-        value: interpolatedLower.data.value,
-      } as FieldValueResponse;
-    } else {
-      [upperResponse, lowerResponse] = await Promise.all([
-        fetchFieldValue(
-          normalizeIndices(plot.nodeUri) + '_error_upper',
-          downsamplingMethod,
-          downsamplingSize,
-          dataPlot?.dataType,
-        ),
-        fetchFieldValue(
-          normalizeIndices(plot.nodeUri) + '_error_lower',
-          downsamplingMethod,
-          downsamplingSize,
-          dataPlot?.dataType,
-        ),
-      ]);
+    const [upperResponse, lowerResponse] = await Promise.all([
+      fetchErrorBand('_error_upper'),
+      fetchErrorBand('_error_lower'),
+    ]);
+
+    if (!upperResponse && !lowerResponse) {
+      // Neither node exists: the expected case for most quantities.
+      console.warn('No error bands for : ', plot.nodeUri);
+      return;
     }
 
-    const defaultUpperYValue = getVectorData(
-      dataPlot.coordinates,
-      upperResponse.value,
-    );
-    await formatErrorBands(
-      plot,
-      defaultUpperYValue,
-      upperResponse.value,
-      plot.nodeUri + '_error_upper',
-    );
+    // Push order is the contract `formatErrorBandLayout` reads: the upper band
+    // is index 0, the lower one index 1. With a single band, whichever it is,
+    // that band is used on both sides of the trace.
+    if (upperResponse) {
+      formatErrorBands(
+        plot,
+        getVectorData(dataPlot.coordinates, upperResponse.value),
+        upperResponse.value,
+        plot.nodeUri + '_error_upper',
+      );
+    }
 
-    const defaultLowerYValue = getVectorData(
-      dataPlot.coordinates,
-      lowerResponse.value,
-    );
-    await formatErrorBands(
-      plot,
-      defaultLowerYValue,
-      lowerResponse.value,
-      plot.nodeUri + '_error_lower',
-    );
+    if (lowerResponse) {
+      formatErrorBands(
+        plot,
+        getVectorData(dataPlot.coordinates, lowerResponse.value),
+        lowerResponse.value,
+        plot.nodeUri + '_error_lower',
+      );
+    }
 
     // Return dataPlot list with the plot which includes error bands
     return dataPlot;
   } catch (error) {
-    if (
-      !(
-        error.toString().includes('No data for') &&
-        (error.toString().includes('_error_upper') ||
-          error.toString().includes('_error_lower'))
-      )
-    ) {
-      console.warn('No error bands for : ', plot.nodeUri);
-    } else {
-      console.error('Error handling error bands: ', error);
-    }
+    // Only unexpected failures reach here: a missing band node is handled by
+    // `fetchErrorBand` above.
+    console.error('Error handling error bands: ', error);
   }
 };
 
@@ -1523,6 +1535,10 @@ const formatErrorBandLayout = (
     mode: 'lines',
     line: { width: 0, shape: lineShape },
     hoverinfo: 'skip',
+    // A band belongs on its trace's axis. Without this it lands on y1 - Plotly's
+    // default - and a band around a y2 trace drags y1's autorange onto y2's
+    // scale, flattening everything actually plotted on y1.
+    yaxis: mainPlot.yaxis,
   };
   if (error_band_type === 'lower') {
     errBandPartPlot.showlegend = false;
@@ -1576,6 +1592,7 @@ export function getErrorsAreaToPlot(
         plotIndex,
         true,
       );
+      lowerPlot.connectgaps = true;
       entirePlotList.push(lowerPlot);
       const upperPlot = formatErrorBandLayout(
         'upper',
@@ -1584,6 +1601,7 @@ export function getErrorsAreaToPlot(
         plotIndex,
         true,
       );
+      upperPlot.connectgaps = true;
       entirePlotList.push(upperPlot);
     }
 
@@ -1611,6 +1629,72 @@ export function getErrorsAreaToPlot(
   }
   return entirePlotList;
 }
+
+/**
+ * The part of a Plotly layout that only the user can produce: what they did
+ * with the mode bar (zoom, pan, autoscale, drag mode).
+ */
+export interface UserRelayout {
+  /** Per axis id (`xaxis`, `yaxis`, `yaxis2`), merged into the derived axis. */
+  axes: Record<string, Partial<LayoutAxis>>;
+  /** Everything else Plotly reported, merged at the top level of the layout. */
+  layout: Partial<Layout>;
+}
+
+/** Nothing changed yet. A shared constant so a reset is a no-op re-render. */
+export const emptyUserRelayout: UserRelayout = { axes: {}, layout: {} };
+
+const AXIS_RELAYOUT_KEY = /^([xyz]axis\d*)\.(range(?:\[([01])\])?|autorange)$/;
+
+/**
+ * Folds one `plotly_relayout` payload into the view state kept across layout
+ * rebuilds.
+ *
+ * Plotly reports what the user did as dotted keys (`yaxis.range[0]`,
+ * `yaxis.autorange`). Merging those blindly - which is what the layout memos
+ * used to do - kept every key forever: the ranges of an old zoom outlived the
+ * autoscale that was supposed to clear them. They are parsed per axis here
+ * instead, so that `range` and `autorange`, which contradict each other,
+ * replace one another.
+ */
+export const mergeAxisRelayout = (
+  previous: UserRelayout,
+  payload: Partial<Layout>,
+): UserRelayout => {
+  const axes: UserRelayout['axes'] = { ...previous.axes };
+  const layout = { ...previous.layout } as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(payload ?? {})) {
+    const match = AXIS_RELAYOUT_KEY.exec(key);
+    if (!match) {
+      layout[key] = value;
+      continue;
+    }
+
+    const [, axisName, attribute, bound] = match;
+    const axis: Partial<LayoutAxis> = { ...axes[axisName] };
+
+    if (attribute === 'autorange') {
+      axis.autorange = value as LayoutAxis['autorange'];
+      // Autoscaling drops the zoom it replaces; `autorange: false` only ever
+      // accompanies a range, so it must not.
+      if (value) delete axis.range;
+    } else {
+      delete axis.autorange;
+      if (bound === undefined) {
+        axis.range = value as LayoutAxis['range'];
+      } else {
+        const range = [...(axis.range ?? [])];
+        range[Number(bound)] = value;
+        axis.range = range;
+      }
+    }
+
+    axes[axisName] = axis;
+  }
+
+  return { axes, layout: layout as Partial<Layout> };
+};
 
 /**
  * Init plots color by adding color in plot.line for each plot

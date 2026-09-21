@@ -12,12 +12,16 @@ import { VerticalSlider } from '../verticalSlider';
 import { useIbexStore } from '../../stores';
 import {
   compareByAxeIndex,
+  emptyUserRelayout,
   getArrayValueFromDependance,
   getErrorsAreaToPlot,
   initPlotColors,
   isMatrixPlottable,
+  mergeAxisRelayout,
+  normalizeIndices,
   removeSuffix,
   swapAxis,
+  UserRelayout,
 } from '../../utils';
 import classes from './SimplePlotly.module.css';
 import { countRedraw, countRender } from '../../utils/perf';
@@ -77,7 +81,8 @@ export const SimplePlotly = ({
   const [title, setTitle] = useState(itemDataGrid.title);
   // What the user did with the mode bar (zoom, pan, autorange). It cannot be
   // derived, and it is merged last so rebuilding the layout never undoes it.
-  const [userRelayout, setUserRelayout] = useState<Partial<Layout>>({});
+  const [userRelayout, setUserRelayout] =
+    useState<UserRelayout>(emptyUserRelayout);
   const plotDivRef = useRef<HTMLDivElement>(null);
   const layoutPlotWidth = showSliders
     ? width * (itemDataGrid.coordinates?.length > 1 ? 0.8 : 1)
@@ -85,11 +90,20 @@ export const SimplePlotly = ({
   const customContainerRef = useRef<HTMLDivElement>(null);
 
   const handleRelayout = useCallback((relayout: Partial<Layout>) => {
-    setUserRelayout((previous) => ({
-      ...previous,
-      ...relayout, // update the layout with new values
-    }));
+    setUserRelayout((previous) => mergeAxisRelayout(previous, relayout));
   }, []);
+
+  // A zoom belongs to the nodes it was made on: indices are normalised away so
+  // that stepping a coordinate slider - which rewrites every `nodeUri` - keeps
+  // it, while pointing the panel at other data drops it.
+  const plottedNodes = itemDataGrid.plot
+    .map((plot) => normalizeIndices(plot.nodeUri))
+    .join('|');
+  useEffect(() => {
+    setUserRelayout((previous) =>
+      previous === emptyUserRelayout ? previous : emptyUserRelayout,
+    );
+  }, [plottedNodes]);
 
   const isPlotInY2 = useCallback(
     (plotName: string) => {
@@ -224,6 +238,7 @@ export const SimplePlotly = ({
         showexponent: 'all',
         separatethousands: true,
         ...axisLayout.xaxis,
+        ...userRelayout.axes.xaxis,
       },
       yaxis: {
         title: {
@@ -241,6 +256,7 @@ export const SimplePlotly = ({
         showexponent: 'all',
         separatethousands: true,
         ...axisLayout.yaxis,
+        ...userRelayout.axes.yaxis,
       },
       yaxis2: itemDataGrid.y2AxisData
         ? {
@@ -263,6 +279,7 @@ export const SimplePlotly = ({
             showline: false,
             zeroline: false,
             showgrid: false,
+            ...userRelayout.axes.yaxis2,
           }
         : {},
       modebar: {
@@ -276,7 +293,7 @@ export const SimplePlotly = ({
       },
       plot_bgcolor: '#c7c7c7',
       dragmode: 'zoom',
-      ...userRelayout,
+      ...userRelayout.layout,
     };
   }, [
     title,

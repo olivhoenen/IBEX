@@ -14,10 +14,14 @@ import { Center, Grid, Group, Select, Stack, Text } from '@mantine/core';
 import { VerticalSlider } from '../verticalSlider';
 import {
   compareByAxeIndex,
+  emptyUserRelayout,
   getArrayValueFromDependance,
   getFirstArrayValueFromShape,
   isMatrixPlottable,
+  mergeAxisRelayout,
+  normalizeIndices,
   swapAxis,
+  UserRelayout,
 } from '../../utils';
 import classes from './Heatmap2D.module.css';
 import { useIbexStore } from '../../stores';
@@ -71,7 +75,8 @@ export const Heatmap2D = ({
   const axisLayout = usePlotLayout({ itemDataGrid });
   // What the user changed with the mode bar (zoom, pan, autorange); merged last
   // so rebuilding the layout never discards it.
-  const [userRelayout, setUserRelayout] = useState<Partial<Layout>>({});
+  const [userRelayout, setUserRelayout] =
+    useState<UserRelayout>(emptyUserRelayout);
   const [title, setTitle] = useState(itemDataGrid.title);
   const layoutPlotWidth = showSliders ? width * 0.8 : width;
 
@@ -120,11 +125,20 @@ export const Heatmap2D = ({
   }, [title]);
 
   const handleRelayout = useCallback((newLayout: Partial<Layout>) => {
-    setUserRelayout((previous) => ({
-      ...previous,
-      ...newLayout, // update the layout with new values
-    }));
+    setUserRelayout((previous) => mergeAxisRelayout(previous, newLayout));
   }, []);
+
+  // A zoom belongs to the nodes it was made on: indices are normalised away so
+  // that stepping a coordinate slider - which rewrites every `nodeUri` - keeps
+  // it, while pointing the panel at other data drops it.
+  const plottedNodes = itemDataGrid.plot
+    .map((plot) => normalizeIndices(plot.nodeUri))
+    .join('|');
+  useEffect(() => {
+    setUserRelayout((previous) =>
+      previous === emptyUserRelayout ? previous : emptyUserRelayout,
+    );
+  }, [plottedNodes]);
 
   const init3DAxis = useCallback(async () => {
     // Transpose data matrix to orign values
@@ -214,6 +228,7 @@ export const Heatmap2D = ({
         scaleanchor: itemDataGrid.forceXyRatio ? 'y' : null,
         scaleratio: itemDataGrid.forceXyRatio ? 1 : null,
         title: { text: XTitle },
+        ...userRelayout.axes.xaxis,
       },
       yaxis: {
         exponentformat: 'power',
@@ -223,6 +238,7 @@ export const Heatmap2D = ({
         ...axisLayout.yaxis,
         ...(yTypeFromCoordinate ? { type: yTypeFromCoordinate } : {}),
         title: { text: YTitle },
+        ...userRelayout.axes.yaxis,
       },
       modebar: {
         orientation: 'v',
@@ -233,7 +249,7 @@ export const Heatmap2D = ({
         groupclick: 'togglegroup',
         tracegroupgap: 0,
       },
-      ...userRelayout,
+      ...userRelayout.layout,
     };
   }, [
     xAxis,
